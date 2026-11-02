@@ -1,0 +1,21 @@
+{
+  "template": {
+    "name": "python-dev-environment-template",
+    "version": "0.1.0",
+    "include": [
+      "AGENTS.md",
+      "opencode.json",
+      ".opencode",
+      "openspec",
+      ".gitignore"
+    ],
+    "exclude": [
+      "/AGENTS.md",
+      "/opencode.json",
+      "/.opencode/",
+      "/openspec/",
+      "/.gitignore",
+      "/.dev-env/"
+    ]
+  }
+}
