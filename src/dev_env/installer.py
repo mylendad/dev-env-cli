@@ -8,6 +8,7 @@ from .git import tracked_paths, update_exclude
 from .manifest import load_manifest, save_manifest
 from .models import InstallResult, Template
 from .template import copy_file, iter_template_files, sha256_file
+from .python_tools import PYTHON_EXCLUDES
 
 
 def _new_manifest(template: Template) -> dict:
@@ -89,9 +90,10 @@ def install(root: Path, template: Template, *, update: bool = False) -> InstallR
         if relative not in source_names and (root / relative).exists():
             result.missing_sources.append(relative)
 
-    tracked_patterns = tuple("/" + item.lstrip("/") for item in template.exclude)
+    combined_excludes = tuple(sorted(set(template.exclude) | set(PYTHON_EXCLUDES)))
+    tracked_patterns = tuple("/" + item.lstrip("/") for item in combined_excludes)
     result.tracked = tracked_paths(root, tracked_patterns)
-    exclude_file, _ = update_exclude(root, template.exclude)
+    exclude_file, _ = update_exclude(root, combined_excludes)
 
     manifest["template"] = {
         "name": template.name,
@@ -100,6 +102,6 @@ def install(root: Path, template: Template, *, update: bool = False) -> InstallR
     }
     manifest["updated_at"] = datetime.now(timezone.utc).isoformat()
     manifest["exclude_file"] = str(exclude_file)
-    manifest["exclude_patterns"] = list(template.exclude)
+    manifest["exclude_patterns"] = list(combined_excludes)
     save_manifest(root, manifest)
     return result

@@ -6,6 +6,7 @@ from .detector import Diagnostic, detect_environment
 from .git import END_MARKER, START_MARKER, exclude_path, tracked_paths
 from .manifest import load_manifest
 from .template import sha256_file
+from .python_tools import diagnose_python_tooling
 
 
 def diagnose(root: Path, *, live_mcp: bool = False) -> list[Diagnostic]:
@@ -92,4 +93,5 @@ def diagnose(root: Path, *, live_mcp: bool = False) -> list[Diagnostic]:
                 ))
 
     checks.extend(detect_environment(root, live_mcp=live_mcp))
+    checks.extend(diagnose_python_tooling(root))
     return checks

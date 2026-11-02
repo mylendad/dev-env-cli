@@ -393,9 +393,6 @@ def detect_environment(project_root: Path, *, live_mcp: bool = False) -> list[Di
 
     common_tools = (
         ("OpenCode", "opencode", True),
-        ("Mise", "mise", False),
-        ("uv", "uv", False),
-        ("Ruff", "ruff", False),
         ("pytest", "pytest", False),
         ("OpenSpec CLI", "openspec", False),
     )

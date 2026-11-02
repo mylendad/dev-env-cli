@@ -12,6 +12,7 @@ from .errors import DevEnvError
 from .git import project_root
 from .installer import install
 from .template import load_template, resolve_template_source
+from .python_tools import setup_python_tooling
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -26,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--template", help="локальный путь или Git URL шаблона")
     init_parser.add_argument("--ref", help="ветка или тег Git-шаблона")
     init_parser.add_argument("--project", type=Path, default=Path.cwd(), help="каталог внутри целевого Git-проекта")
+    init_parser.add_argument("--yes", "-y", action="store_true", help="подтвердить установку недостающих Python-инструментов через Mise")
 
     update_parser = subparsers.add_parser("update", help="обновить нетронутые локально управляемые файлы")
     update_parser.add_argument("--template", help="локальный путь или Git URL шаблона")
@@ -102,10 +104,39 @@ def _run_init(args, *, update: bool) -> int:
     root, template, temporary = _resolve(args.project, args.template, args.ref)
     try:
         result = install(root, template, update=update)
+        tooling = setup_python_tooling(
+            root,
+            install_missing=not update,
+            assume_yes=getattr(args, "yes", False),
+        )
         print(f"Проект: {root}")
         print(f"Шаблон: {template.name} ({template.version})")
         _print_result(result, "update" if update else "init")
-        return 1 if result.conflicts or result.tracked else 0
+        print("\nPython tooling:")
+        for item in tooling.created:
+            print(f"  + создано: {item}")
+        for item in tooling.updated:
+            print(f"  + настроено: {item}")
+        for item in tooling.preserved:
+            print(f"  = сохранено: {item}")
+        if tooling.environment:
+            env = tooling.environment
+            print(f"  = найдено окружение: {env.path} ({env.source})")
+            if env.version:
+                print(f"    Python {env.version}")
+        else:
+            print("  - существующее виртуальное окружение не найдено")
+        if tooling.installed:
+            print("  + установлено через Mise: " + ", ".join(tooling.installed))
+        elif tooling.install_declined:
+            print("  ! установка недостающих инструментов отклонена")
+        elif not tooling.install_candidates and not tooling.warnings and not tooling.install_failures:
+            print("  = необходимые команды уже доступны; повторная установка не требуется")
+        for warning in tooling.warnings:
+            print(f"  ! {warning}")
+        for failure in tooling.install_failures:
+            print(f"  ! ошибка установки: {failure}")
+        return 1 if result.conflicts or result.tracked or tooling.install_failures else 0
     finally:
         if temporary:
             temporary.cleanup()
