@@ -127,3 +127,21 @@ def test_destination_symlink_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(DevEnvError, match="Символическая ссылка"):
         install(project_root(repo), load_template(template))
     assert not (outside / "skills/demo/SKILL.md").exists()
+
+
+def test_template_loader_supports_legacy_metadata_filename(tmp_path: Path) -> None:
+    from dev_env.template import load_template
+
+    template = tmp_path / "legacy-template"
+    template.mkdir()
+    (template / "AGENTS.md").write_text("rules\n", encoding="utf-8")
+    (template / "dev-env-template.json").write_text(
+        json.dumps({"template": {"name": "legacy", "version": "2.0.0", "include": ["AGENTS.md"], "exclude": ["/AGENTS.md"]}}),
+        encoding="utf-8",
+    )
+
+    loaded = load_template(template)
+
+    assert loaded.name == "legacy"
+    assert loaded.version == "2.0.0"
+    assert loaded.include == ("AGENTS.md",)

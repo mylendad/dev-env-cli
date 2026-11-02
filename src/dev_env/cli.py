@@ -32,8 +32,12 @@ def build_parser() -> argparse.ArgumentParser:
     update_parser.add_argument("--ref", help="ветка или тег Git-шаблона")
     update_parser.add_argument("--project", type=Path, default=Path.cwd(), help="каталог внутри целевого Git-проекта")
 
-    doctor_parser = subparsers.add_parser("doctor", help="проверить установленную конфигурацию")
+    doctor_parser = subparsers.add_parser("doctor", help="проверить установленную конфигурацию и инструменты")
     doctor_parser.add_argument("--project", type=Path, default=Path.cwd())
+    doctor_parser.add_argument(
+        "--live-mcp", action="store_true",
+        help="дополнительно запустить `opencode mcp list` для проверки соединений (может обращаться к сети)",
+    )
 
     diff_parser = subparsers.add_parser("diff", help="показать различия между проектом и шаблоном")
     diff_parser.add_argument("--template", help="локальный путь или Git URL шаблона")
@@ -173,12 +177,19 @@ def main(argv: list[str] | None = None) -> int:
             return _run_init(args, update=True)
         if args.command == "doctor":
             root = project_root(args.project.expanduser().resolve())
-            checks = diagnose(root)
+            checks = diagnose(root, live_mcp=args.live_mcp)
             print(f"Проверка проекта: {root}\n")
-            failed = False
-            for name, status in checks:
-                print(f"{'[OK]' if status == 'OK' else '[! ]'} {name}: {status}")
-                failed |= status != "OK"
+            for check in checks:
+                marker = {
+                    "OK": "[OK]",
+                    "INFO": "[--]",
+                    "WARN": "[! ]",
+                    "MISSING": "[NO]",
+                    "ERROR": "[ERR]",
+                }.get(check.status, "[? ]")
+                print(f"{marker} {check.category} / {check.name}: {check.detail}")
+            failed = any(check.failed for check in checks)
+            print("\nРезультат: " + ("есть обязательные проблемы" if failed else "обязательные проверки пройдены"))
             return 1 if failed else 0
         if args.command == "diff":
             return _run_diff(args.project, args.template, args.ref)

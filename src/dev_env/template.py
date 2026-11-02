@@ -10,7 +10,7 @@ from pathlib import Path, PurePosixPath
 from .errors import DevEnvError
 from .models import Template
 
-METADATA_NAME = ".dev-env-template.json"
+METADATA_NAMES = (".dev-env-template.json", "dev-env-template.json")
 DEFAULT_INCLUDE = ("AGENTS.md", "opencode.json", ".opencode", "openspec", ".gitignore")
 DEFAULT_EXCLUDE = (
     "/AGENTS.md", "/opencode.json", "/.opencode/", "/openspec/",
@@ -38,7 +38,7 @@ def load_template(root: Path, revision: str | None = None) -> Template:
     if not root.is_dir():
         raise DevEnvError(f"Каталог шаблона не найден: {root}")
 
-    metadata_path = root / METADATA_NAME
+    metadata_path = next((root / name for name in METADATA_NAMES if (root / name).is_file()), root / METADATA_NAMES[0])
     if metadata_path.exists():
         try:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
