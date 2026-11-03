@@ -253,7 +253,26 @@ def _select_python_version(
 
 def _section_header(section: str) -> re.Pattern[str]:
     escaped = re.escape(section)
-    return re.compile(rf"(?m)^\[{escaped}\]\s*(?:#.*)?$")
+    return re.compile(rf"(?m)^\[{escaped}\][ \t]*(?:#.*)?$")
+
+
+def _replace_table_value(content: str, section: str, key: str, value: str) -> tuple[str, bool]:
+    """Replace one simple TOML key in a table, preserving surrounding text/comments."""
+    header = _section_header(section).search(content)
+    if not header:
+        return content, False
+
+    remainder = content[header.end():]
+    next_header = re.search(r"(?m)^\s*\[[^\]\r\n]+\][ \t]*(?:#.*)?$", remainder)
+    end = header.end() + next_header.start() if next_header else len(content)
+    table_text = content[header.end():end]
+    key_pattern = re.compile(
+        rf"(?m)^([ \t]*{re.escape(key)}[ \t]*=[ \t]*)([^#\r\n]*?)([ \t]*(?:#.*)?)$"
+    )
+    updated, count = key_pattern.subn(lambda match: f"{match.group(1)}{value}{match.group(3)}", table_text, count=1)
+    if count == 0:
+        return content, False
+    return content[:header.end()] + updated + content[end:], True
 
 
 def _insert_table_values(content: str, section: str, values: dict[str, str]) -> tuple[str, list[str]]:
@@ -379,6 +398,20 @@ def _ensure_mise_config(
     if not isinstance(parsed_tools, dict):
         raise DevEnvError("В mise.toml секция [tools] должна быть таблицей.")
     additions: list[str] = []
+    python_version_changed = False
+    if "python" in parsed_tools and python_version_override is not None:
+        current_python = _configured_tool_version(existing, "python", DEFAULT_PYTHON_VERSION)
+        if current_python != python_version:
+            content, replaced = _replace_table_value(
+                content, "tools", "python", json.dumps(python_version)
+            )
+            if not replaced:
+                raise DevEnvError(
+                    "Не удалось безопасно изменить tools.python в mise.toml; файл оставлен без изменений."
+                )
+            python_version_changed = True
+            additions.append(f'python = {json.dumps(python_version)}')
+
     missing_tools = {
         key: value for key, value in tool_values.items()
         if key.strip('"') not in parsed_tools
@@ -522,7 +555,10 @@ def _ensure_mise_config(
         temporary = path.with_name("mise.toml.dev-env.tmp")
         temporary.write_text(content, encoding="utf-8")
         temporary.replace(path)
-        updated.append("mise.toml (добавлены только отсутствующие инструменты/задачи)")
+        if python_version_changed:
+            updated.append(f"mise.toml (версия Python изменена на {python_version}; добавлены отсутствующие настройки)")
+        else:
+            updated.append("mise.toml (добавлены только отсутствующие инструменты/задачи)")
     else:
         preserved.append("mise.toml (настройки уже присутствуют)")
 
@@ -934,11 +970,9 @@ def _choose_python_version(
     """Ask for a Python version only when the project has no explicit Mise choice."""
     mise_path = root / "mise.toml"
     existing = _read_toml(mise_path) if mise_path.is_file() and not mise_path.is_symlink() else {}
-    tools = existing.get("tools", {})
-    configured = tools.get("python") if isinstance(tools, dict) else None
-    if configured is not None:
-        return _select_python_version(root, existing_mise=existing, environment=environment)
-
+    # Existing Mise selection is the default, not a reason to suppress the
+    # interactive choice. This lets users deliberately change a project that
+    # was initialized earlier with the default Python version.
     detected = _select_python_version(root, existing_mise=existing, environment=environment)
     if not interactive:
         return detected

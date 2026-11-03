@@ -21,7 +21,7 @@ uv tool install --from ./dev-env-cli dev-env
 Or directly from your CLI repository:
 
 ```bash
-uv tool install git+https://github.com/USERNAME/dev-env.git
+uv tool install git+https://github.com/mylendad/dev-env-cli
 ```
 
 ## Configure the default template
@@ -79,14 +79,14 @@ The generated `mise.toml` manages these tools:
 |---|---|
 | Python | Project Python version, inferred from existing Mise config, `.python-version`, `requires-python`, a project venv, or the available Python |
 
-During interactive `dev-env init`, the inferred Python version is offered as the default. Enter another version (for example `3.13` or `3.14`) to select it; press Enter to keep the detected version. Existing `mise.toml` Python selections are preserved, and non-interactive/`--yes` runs do not prompt.
+During interactive `dev-env init`, the inferred Python version is offered as the default. Enter another version (for example `3.13` or `3.14`) to select it; press Enter to keep the detected version. An existing `mise.toml` Python selection is shown as the default, but can be changed interactively; Enter keeps it. Non-interactive/`--yes` runs preserve the existing selection and do not prompt.
 | uv | Virtual environments, lockfiles and project dependencies |
 | Ruff | Linting and formatting (Mise PyPI backend) |
 | Node.js | Runtime required by the Mise npm backend for Pyright |
 | Pyright | Static type checking and the Pyright language server |
 | tmux | Persistent terminal session for OpenCode (installed as a host package through Mise bootstrap) |
 
-The initial selectors are Python `3.12` when no project/system version can be inferred, latest uv/Ruff/Pyright, and Node.js `24`. Existing `mise.toml` selectors are preserved. If an installed global command already satisfies the project's selector, the CLI reuses it rather than reinstalling it. For a selector of `latest`, reuse-first behavior means any existing executable is accepted; the CLI does not query the registry or upgrade it. A missing executable is installed at the newest version resolved by Mise. It also asks Mise to resolve the project-selected executable with `mise which`; this avoids treating an uninstalled Mise shim as an installed tool. Mise backend dependencies are handled separately: installing a missing `pypi:` tool also installs the configured Mise-managed Python and uv first, and installing a missing `npm:` tool also installs the configured Mise-managed Node.js first. This is required even when compatible system executables are available: the Mise PyPI backend resolves its installer dependencies from the Mise toolset, not from an unrelated system executable. The CLI checks `mise which` rather than relying on `PATH` for these backend prerequisites.
+The initial selectors are Python `3.12` when no project/system version can be inferred, latest uv/Ruff/Pyright, and Node.js `24`. Existing `mise.toml` selectors are preserved unless you explicitly choose a different Python version at the interactive prompt. If an installed global command already satisfies the project's selector, the CLI reuses it rather than reinstalling it. For a selector of `latest`, reuse-first behavior means any existing executable is accepted; the CLI does not query the registry or upgrade it. A missing executable is installed at the newest version resolved by Mise. It also asks Mise to resolve the project-selected executable with `mise which`; this avoids treating an uninstalled Mise shim as an installed tool. Mise backend dependencies are handled separately: installing a missing `pypi:` tool also installs the configured Mise-managed Python and uv first, and installing a missing `npm:` tool also installs the configured Mise-managed Node.js first. This is required even when compatible system executables are available: the Mise PyPI backend resolves its installer dependencies from the Mise toolset, not from an unrelated system executable. The CLI checks `mise which` rather than relying on `PATH` for these backend prerequisites.
 
 Ruff and Pyright config files are defaults only. If Ruff is already configured in `ruff.toml`, `.ruff.toml` or `[tool.ruff]`, or Pyright is configured in `pyrightconfig.json` or `[tool.pyright]`, those settings are left untouched.
 

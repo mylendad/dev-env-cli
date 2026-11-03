@@ -78,16 +78,75 @@ def test_python_version_prompt_keeps_detected_version_on_empty_input(tmp_path: P
     assert selected == "3.12"
 
 
-def test_python_version_prompt_preserves_existing_mise_choice(tmp_path: Path) -> None:
+def test_python_version_prompt_uses_existing_mise_choice_as_default_and_allows_change(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "mise.toml").write_text('[tools]\npython = "3.11"\n', encoding="utf-8")
+    prompts: list[str] = []
+
+    def choose(prompt: str) -> str:
+        prompts.append(prompt)
+        return "3.13"
+
+    selected = _choose_python_version(project, None, interactive=True, input_fn=choose)
+
+    assert selected == "3.13"
+    assert len(prompts) == 1
+    assert "[3.11]" in prompts[0]
+
+
+def test_python_version_prompt_keeps_existing_mise_choice_on_empty_input(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
     (project / "mise.toml").write_text('[tools]\npython = "3.11"\n', encoding="utf-8")
 
-    selected = _choose_python_version(
-        project, None, interactive=True, input_fn=lambda prompt: (_ for _ in ()).throw(AssertionError("prompt must not run"))
-    )
+    selected = _choose_python_version(project, None, interactive=True, input_fn=lambda prompt: "")
 
     assert selected == "3.11"
+
+
+def test_setup_prompts_and_updates_existing_mise_python_version(tmp_path: Path, monkeypatch) -> None:
+    project = make_git_project(tmp_path / "project")
+    (project / "mise.toml").write_text(
+        '[tools]\npython = "3.12"\nuv = "latest"\n"pypi:ruff" = "latest"\n'
+        'node = "24"\n"npm:pyright" = "latest"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("dev_env.python_tools.sys.stdin", type("TTY", (), {"isatty": lambda self: True})())
+    monkeypatch.setattr("dev_env.python_tools._mise_executable", lambda: "/usr/bin/mise")
+    monkeypatch.setattr("dev_env.python_tools._tmux_bootstrap_package", lambda: None)
+    monkeypatch.setattr("dev_env.python_tools._tool_install_candidates", lambda *args, **kwargs: [])
+    prompts: list[str] = []
+
+    def choose(prompt: str) -> str:
+        prompts.append(prompt)
+        return "3.13"
+
+    result = setup_python_tooling(project, install_missing=True, input_fn=choose)
+
+    config = tomllib.loads((project / "mise.toml").read_text(encoding="utf-8"))
+    assert result.python_version == "3.13"
+    assert config["tools"]["python"] == "3.13"
+    assert len(prompts) == 1
+    assert "[3.12]" in prompts[0]
+
+
+def test_python_version_override_updates_existing_mise_setting_and_preserves_comments(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "mise.toml").write_text(
+        '[tools]\npython = "3.11" # existing choice\nnode = "24"\n', encoding="utf-8"
+    )
+
+    _created, updated, config = _ensure_mise_config(
+        project, environment=None, python_version_override="3.13"
+    )
+
+    content = (project / "mise.toml").read_text(encoding="utf-8")
+    assert config["tools"]["python"] == "3.13"
+    assert 'python = "3.13" # existing choice' in content
+    assert 'node = "24"' in content
+    assert any("версия Python изменена на 3.13" in item for item in updated)
 
 
 def test_python_version_prompt_is_skipped_in_noninteractive_mode(tmp_path: Path, monkeypatch) -> None:
