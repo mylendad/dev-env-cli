@@ -394,7 +394,6 @@ def detect_environment(project_root: Path, *, live_mcp: bool = False) -> list[Di
     common_tools = (
         ("OpenCode", "opencode", True),
         ("pytest", "pytest", False),
-        ("OpenSpec CLI", "openspec", False),
     )
     for label, command, required in common_tools:
         _add_command_check(checks, label=label, command=command, required=required)
@@ -425,15 +424,52 @@ def detect_environment(project_root: Path, *, live_mcp: bool = False) -> list[Di
         if item.data is not None:
             _check_configured_servers(checks, scope=item.scope, config=item.data)
 
-    if (project_root / "openspec" / "config.yaml").is_file():
-        _add_command_check(
-            checks, label="OpenSpec CLI (проект инициализирован)",
-            command="openspec", required=True,
-        )
+    # OpenSpec is a first-class part of the personal development environment.
+    # Its standalone installer defaults to ~/.local/bin, which may not be in PATH
+    # in non-login shells (e.g. systemd/SSH automation).
+    from .openspec import find_openspec, openspec_version
+
+    openspec_executable = find_openspec()
+    if openspec_executable:
+        version = openspec_version(openspec_executable)
+        checks.append(Diagnostic(
+            "OpenSpec", "CLI", "OK" if version else "WARN",
+            f"{version} → {openspec_executable}" if version else
+            f"команда найдена, но `openspec --version` не сработала: {openspec_executable}",
+            required=True,
+        ))
     else:
         checks.append(Diagnostic(
-            "OpenSpec", "Инициализация проекта", "INFO",
-            "openspec/config.yaml не найден; OpenSpec пока не подключён к проекту",
+            "OpenSpec", "CLI", "MISSING",
+            "не найден; установи через `dev-env init` с подтверждением или по официальной инструкции",
+            required=True,
+        ))
+
+    openspec_config = project_root / "openspec" / "config.yaml"
+    if openspec_config.is_file():
+        checks.append(Diagnostic(
+            "OpenSpec", "Project config", "OK",
+            "openspec/config.yaml найден", required=True,
+        ))
+        skills = sorted((project_root / ".opencode" / "skills").glob("openspec-*/SKILL.md"))
+        commands = sorted((project_root / ".opencode" / "commands").glob("opsx-*.md"))
+        checks.append(Diagnostic(
+            "OpenSpec", "OpenCode skills", "OK" if skills else "WARN",
+            f"найдено {len(skills)} OpenSpec skills в .opencode/skills/" if skills else
+            "OpenSpec skills не найдены; запусти `openspec init --tools opencode`",
+            required=True,
+        ))
+        checks.append(Diagnostic(
+            "OpenSpec", "OpenCode commands", "OK" if commands else "WARN",
+            f"найдено {len(commands)} OPSX-команд в .opencode/commands/" if commands else
+            "OPSX-команды не найдены; проверь delivery profile и запусти `openspec init --tools opencode`",
+            required=True,
+        ))
+    else:
+        checks.append(Diagnostic(
+            "OpenSpec", "Project config", "MISSING",
+            "openspec/config.yaml не найден; выполни `dev-env init`",
+            required=True,
         ))
 
     if live_mcp:

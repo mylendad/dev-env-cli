@@ -83,7 +83,7 @@ The generated `mise.toml` manages these tools:
 | Node.js | Runtime required by the Mise npm backend for Pyright |
 | Pyright | Static type checking and the Pyright language server |
 
-The initial selectors are Python `3.12` when no project/system version can be inferred, latest uv/Ruff/Pyright, and Node.js `24`. Existing `mise.toml` selectors are preserved. If an installed global command already satisfies the project's selector, the CLI reuses it rather than reinstalling it. For a selector of `latest`, reuse-first behavior means any existing executable is accepted; the CLI does not query the registry or upgrade it. A missing executable is installed at the newest version resolved by Mise. It also asks Mise to resolve the project-selected executable with `mise which`; this avoids treating an uninstalled Mise shim as an installed tool.
+The initial selectors are Python `3.12` when no project/system version can be inferred, latest uv/Ruff/Pyright, and Node.js `24`. Existing `mise.toml` selectors are preserved. If an installed global command already satisfies the project's selector, the CLI reuses it rather than reinstalling it. For a selector of `latest`, reuse-first behavior means any existing executable is accepted; the CLI does not query the registry or upgrade it. A missing executable is installed at the newest version resolved by Mise. It also asks Mise to resolve the project-selected executable with `mise which`; this avoids treating an uninstalled Mise shim as an installed tool. Mise backend dependencies are handled separately: installing a missing `pypi:` tool also installs the configured Mise-managed Python first, and installing a missing `npm:` tool also installs the configured Mise-managed Node.js first. This is required even when a compatible system Python or Node.js is available, because those backends depend on Mise-managed runtimes.
 
 Ruff and Pyright config files are defaults only. If Ruff is already configured in `ruff.toml`, `.ruff.toml` or `[tool.ruff]`, or Pyright is configured in `pyrightconfig.json` or `[tool.pyright]`, those settings are left untouched.
 
@@ -165,3 +165,37 @@ Important: Git exclude rules affect only untracked files. If a path is already t
 - `.dev-env/manifest.json` records managed files, their last installed hashes, and Git exclude patterns.
 - Global OpenCode configuration is read-only.
 - Existing `mise.toml`, Ruff/Pyright settings, and virtual environments are preserved; only missing tool/task entries or default config files are added.
+
+## OpenSpec integration
+
+OpenSpec is managed in two scopes:
+
+- The OpenSpec CLI is installed once per user machine.
+- Each project is initialized with the OpenCode adapter and keeps its own `openspec/` data and generated `.opencode/` skills/commands.
+
+`dev-env init` checks for the `openspec` executable. If it is missing, the CLI asks before running the official standalone installer from `https://openspec.dev/cli/install.sh`; the installer defaults to `~/.local/bin`. On non-interactive terminals, installation is skipped unless `--yes` is supplied. The installer runs without `sudo`.
+
+After the CLI is available, `dev-env init` runs:
+
+```bash
+openspec init --tools opencode
+```
+
+The explicit tool selection avoids the interactive tool picker, so this also works on headless Ubuntu servers. OpenSpec's `init` is safe to rerun: it refreshes the OpenCode integration and adds it when the project was initialized for another tool.
+
+`dev-env update` runs `openspec update` only when `openspec/config.yaml` exists. It sets `OPENSPEC_NO_UPDATE_CHECK=1` so refreshing project-generated files does not unexpectedly trigger a global CLI upgrade prompt. Update the global CLI separately using the official OpenSpec installation instructions.
+
+Useful commands:
+
+```bash
+dev-env init                 # ask before installing a missing OpenSpec CLI
+dev-env init --yes           # approve missing tool installation, including OpenSpec
+dev-env init --skip-openspec # skip OpenSpec for this run
+dev-env update               # refresh generated OpenSpec files in initialized projects
+dev-env update --skip-openspec
+dev-env doctor               # check CLI, openspec/config.yaml, OpenCode skills and commands
+```
+
+`doctor` checks the OpenSpec CLI version, `openspec/config.yaml`, `.opencode/skills/openspec-*/SKILL.md`, and `.opencode/commands/opsx-*.md`. It does not execute OpenSpec workflows or change global configuration.
+
+The project-local OpenSpec data and OpenCode integration files are excluded through `.git/info/exclude` by default, matching this template's personal/local-only configuration policy. If you want specifications and archived changes to be shared with teammates, remove `/openspec/` from the local exclude block or change the template policy before using it in a collaborative repository.

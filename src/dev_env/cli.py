@@ -13,6 +13,7 @@ from .git import project_root
 from .installer import install
 from .template import load_template, resolve_template_source
 from .python_tools import setup_python_tooling
+from .openspec import setup_openspec
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -27,12 +28,15 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--template", help="локальный путь или Git URL шаблона")
     init_parser.add_argument("--ref", help="ветка или тег Git-шаблона")
     init_parser.add_argument("--project", type=Path, default=Path.cwd(), help="каталог внутри целевого Git-проекта")
-    init_parser.add_argument("--yes", "-y", action="store_true", help="подтвердить установку недостающих Python-инструментов через Mise")
+    init_parser.add_argument("--yes", "-y", action="store_true", help="подтвердить установку недостающих инструментов, включая OpenSpec CLI")
+    init_parser.add_argument("--skip-openspec", action="store_true", help="не устанавливать и не инициализировать OpenSpec")
 
     update_parser = subparsers.add_parser("update", help="обновить нетронутые локально управляемые файлы")
     update_parser.add_argument("--template", help="локальный путь или Git URL шаблона")
     update_parser.add_argument("--ref", help="ветка или тег Git-шаблона")
     update_parser.add_argument("--project", type=Path, default=Path.cwd(), help="каталог внутри целевого Git-проекта")
+    update_parser.add_argument("--yes", "-y", action="store_true", help="подтвердить установку OpenSpec CLI, если он отсутствует")
+    update_parser.add_argument("--skip-openspec", action="store_true", help="не обновлять OpenSpec")
 
     doctor_parser = subparsers.add_parser("doctor", help="проверить установленную конфигурацию и инструменты")
     doctor_parser.add_argument("--project", type=Path, default=Path.cwd())
@@ -109,6 +113,12 @@ def _run_init(args, *, update: bool) -> int:
             install_missing=not update,
             assume_yes=getattr(args, "yes", False),
         )
+        openspec = setup_openspec(
+            root,
+            mode="update" if update else "init",
+            assume_yes=getattr(args, "yes", False),
+            skip=getattr(args, "skip_openspec", False),
+        )
         print(f"Проект: {root}")
         print(f"Шаблон: {template.name} ({template.version})")
         _print_result(result, "update" if update else "init")
@@ -136,7 +146,18 @@ def _run_init(args, *, update: bool) -> int:
             print(f"  ! {warning}")
         for failure in tooling.install_failures:
             print(f"  ! ошибка установки: {failure}")
-        return 1 if result.conflicts or result.tracked or tooling.install_failures else 0
+        print("\nOpenSpec:")
+        if openspec.version:
+            print(f"  = CLI: {openspec.version} ({openspec.executable})")
+        elif openspec.executable:
+            print(f"  ! CLI найден, но версию получить не удалось: {openspec.executable}")
+        for action in openspec.actions:
+            print(f"  + {action}")
+        for warning in openspec.warnings:
+            print(f"  ! {warning}")
+        if openspec.output:
+            print(openspec.output)
+        return 1 if result.conflicts or result.tracked or tooling.install_failures or openspec.status == "incomplete" else 0
     finally:
         if temporary:
             temporary.cleanup()

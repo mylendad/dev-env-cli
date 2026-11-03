@@ -198,6 +198,62 @@ def test_tool_install_candidates_skip_healthy_globally_available_tools(tmp_path:
     assert _tool_install_candidates(tmp_path, config, None) == []
 
 
+def test_missing_pypi_tool_also_installs_mise_managed_python_first(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = {
+        "tools": {
+            "python": "3.12",
+            "uv": "latest",
+            "pypi:ruff": "latest",
+            "node": "24",
+            "npm:pyright": "latest",
+        }
+    }
+    versions = {
+        "uv": "uv 0.9.0",
+        # Ruff is missing; the system/venv Python is present and compatible.
+        "node": "v24.1.0",
+        "pyright": "pyright 1.1.400",
+    }
+    monkeypatch.setattr("dev_env.python_tools._command_version", lambda command, **kwargs: versions.get(command))
+    monkeypatch.setattr("dev_env.python_tools._system_python_version", lambda *_: "3.12.3")
+    monkeypatch.setattr("dev_env.python_tools.shutil.which", lambda command: f"/usr/bin/{command}")
+
+    assert _tool_install_candidates(tmp_path, config, None) == [
+        "python@3.12",
+        "pypi:ruff@latest",
+    ]
+
+
+def test_missing_npm_tool_also_installs_mise_managed_node_first(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = {
+        "tools": {
+            "python": "3.12",
+            "uv": "latest",
+            "pypi:ruff": "latest",
+            "node": "24",
+            "npm:pyright": "latest",
+        }
+    }
+    versions = {
+        "uv": "uv 0.9.0",
+        "ruff": "ruff 0.14.0",
+        # Pyright is missing; system Node.js is present and compatible.
+    }
+    monkeypatch.setattr("dev_env.python_tools._command_version", lambda command, **kwargs: versions.get(command))
+    monkeypatch.setattr("dev_env.python_tools._system_python_version", lambda *_: "3.12.3")
+    monkeypatch.setattr("dev_env.python_tools.shutil.which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr("dev_env.python_tools._resolve_command_executable", lambda command, **kwargs: f"/usr/bin/{command}")
+
+    assert _tool_install_candidates(tmp_path, config, None) == [
+        "node@24",
+        "npm:pyright@latest",
+    ]
+
+
 def test_setup_does_not_overwrite_existing_ruff_or_pyright_config(tmp_path: Path, monkeypatch) -> None:
     project = tmp_path / "project"
     project.mkdir()

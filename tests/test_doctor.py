@@ -67,3 +67,35 @@ def test_detect_environment_reports_invalid_jsonc(tmp_path: Path, monkeypatch) -
 
     assert project_config.status == "ERROR"
     assert project_config.failed is True
+
+
+def test_doctor_checks_openspec_cli_and_generated_opencode_files(tmp_path: Path, monkeypatch) -> None:
+    from dev_env.doctor import diagnose
+
+    import subprocess
+
+    project = tmp_path / "project"
+    project.mkdir()
+    subprocess.run(["git", "init", str(project)], check=True, stdout=subprocess.PIPE)
+    (project / "openspec").mkdir()
+    (project / "openspec" / "config.yaml").write_text("schema: spec-driven\n", encoding="utf-8")
+    (project / ".opencode" / "skills" / "openspec-propose").mkdir(parents=True)
+    (project / ".opencode" / "skills" / "openspec-propose" / "SKILL.md").write_text("---\nname: openspec-propose\n---\n", encoding="utf-8")
+    (project / ".opencode" / "commands").mkdir(parents=True)
+    (project / ".opencode" / "commands" / "opsx-propose.md").write_text("---\n---\n", encoding="utf-8")
+    (project / "opencode.json").write_text('{"$schema":"https://opencode.ai/config.json"}', encoding="utf-8")
+
+    monkeypatch.setattr("dev_env.openspec.find_openspec", lambda: "/usr/bin/openspec")
+    monkeypatch.setattr("dev_env.openspec.openspec_version", lambda _path: "OpenSpec v1.7.0")
+    monkeypatch.setattr("dev_env.detector.shutil.which", lambda command: f"/mock/{command}")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-config"))
+    monkeypatch.delenv("OPENCODE_CONFIG", raising=False)
+
+    checks = diagnose(project)
+    openspec_checks = [check for check in checks if check.category == "OpenSpec"]
+    by_name = {check.name: check for check in openspec_checks}
+
+    assert by_name["CLI"].status == "OK"
+    assert by_name["Project config"].status == "OK"
+    assert by_name["OpenCode skills"].status == "OK"
+    assert by_name["OpenCode commands"].status == "OK"

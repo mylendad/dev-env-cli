@@ -10,6 +10,18 @@ from .models import InstallResult, Template
 from .template import copy_file, iter_template_files, sha256_file
 from .python_tools import PYTHON_EXCLUDES
 
+# Personal, machine-local configuration files are intentionally kept out of Git.
+# Keep these defaults even when a custom template supplies its own exclude list.
+PERSONAL_CONFIG_EXCLUDES = (
+    "/AGENTS.md",
+    "/opencode.json",
+    "/opencode.jsonc",
+    "/.opencode/",
+    "/openspec/",
+    "/.gitignore",
+    "/.dev-env/",
+)
+
 
 def _new_manifest(template: Template) -> dict:
     return {
@@ -90,7 +102,9 @@ def install(root: Path, template: Template, *, update: bool = False) -> InstallR
         if relative not in source_names and (root / relative).exists():
             result.missing_sources.append(relative)
 
-    combined_excludes = tuple(sorted(set(template.exclude) | set(PYTHON_EXCLUDES)))
+    combined_excludes = tuple(
+        sorted(set(template.exclude) | set(PYTHON_EXCLUDES) | set(PERSONAL_CONFIG_EXCLUDES))
+    )
     tracked_patterns = tuple("/" + item.lstrip("/") for item in combined_excludes)
     result.tracked = tracked_paths(root, tracked_patterns)
     exclude_file, _ = update_exclude(root, combined_excludes)

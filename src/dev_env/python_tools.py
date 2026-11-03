@@ -686,6 +686,24 @@ def _tool_install_candidates(root: Path, config: dict, environment: VirtualEnvir
     if not _version_matches(pyright_version, pyright_expected) or not language_server_exists:
         candidates.append(f"npm:pyright@{pyright_expected}")
 
+    # Mise backends have managed-tool dependencies that are not satisfied by
+    # executables found on the system PATH. In particular, `pypi:` requires a
+    # Mise-managed Python even when the project already has a compatible venv;
+    # `npm:` similarly needs a Mise-managed Node.js. Install those dependencies
+    # first. `mise install <selector>` is idempotent, so this is safe when the
+    # dependency is already installed under Mise.
+    if any(selector.startswith("pypi:") for selector in candidates):
+        if not any(selector.startswith("python@") for selector in candidates):
+            python_expected = _configured_tool_version(config, "python", DEFAULT_PYTHON_VERSION)
+            candidates.insert(0, f"python@{python_expected}")
+
+    if any(selector.startswith("npm:") for selector in candidates):
+        if not any(selector.startswith("node@") for selector in candidates):
+            node_expected = _configured_tool_version(config, "node", "24")
+            # Keep Node before the npm-backed package in installation order.
+            npm_index = next(i for i, selector in enumerate(candidates) if selector.startswith("npm:"))
+            candidates.insert(npm_index, f"node@{node_expected}")
+
     # Stable order and no duplicate selectors.
     return list(dict.fromkeys(candidates))
 

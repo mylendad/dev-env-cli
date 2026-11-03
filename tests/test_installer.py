@@ -145,3 +145,19 @@ def test_template_loader_supports_legacy_metadata_filename(tmp_path: Path) -> No
     assert loaded.name == "legacy"
     assert loaded.version == "2.0.0"
     assert loaded.include == ("AGENTS.md",)
+
+
+def test_personal_openspec_paths_are_excluded_even_if_template_omits_them(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path / "repo")
+    template = make_template(tmp_path / "template")
+    metadata_path = template / ".dev-env-template.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["template"]["exclude"] = ["/AGENTS.md"]
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    install(project_root(repo), load_template(template))
+
+    exclude = (repo / ".git/info/exclude").read_text(encoding="utf-8")
+    assert "/openspec/" in exclude
+    assert "/.opencode/" in exclude
+    assert "/.gitignore" in exclude
