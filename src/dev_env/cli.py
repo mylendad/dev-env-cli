@@ -123,6 +123,8 @@ def _run_init(args, *, update: bool) -> int:
         print(f"Шаблон: {template.name} ({template.version})")
         _print_result(result, "update" if update else "init")
         print("\nPython tooling:")
+        if tooling.python_version:
+            print(f"  = версия Python для проекта: {tooling.python_version}")
         for item in tooling.created:
             print(f"  + создано: {item}")
         for item in tooling.updated:

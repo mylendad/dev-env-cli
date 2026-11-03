@@ -82,7 +82,7 @@ def install_openspec(*, timeout: float = 90.0) -> str:
     try:
         request = urllib.request.Request(
             INSTALL_URL,
-            headers={"User-Agent": "dev-env-cli/0.4.2"},
+            headers={"User-Agent": "dev-env-cli/0.4.3"},
         )
         with urllib.request.urlopen(request, timeout=30) as response:
             script = response.read()

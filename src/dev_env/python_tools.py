@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import re
 import shlex
 import shutil
@@ -63,6 +64,7 @@ class PythonToolingResult:
     installed: list[str] = field(default_factory=list)
     install_failures: list[str] = field(default_factory=list)
     install_declined: bool = False
+    python_version: str | None = None
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:
@@ -281,13 +283,31 @@ def _insert_table_values(content: str, section: str, values: dict[str, str]) -> 
     return prefix + f"[{section}]\n" + "\n".join(values.values()) + "\n", list(values.values())
 
 
-def _render_task(run: str | None = None, *, description: str, depends: tuple[str, ...] = ()) -> str:
+def _render_task(
+    run: str | None = None,
+    *,
+    description: str,
+    depends: tuple[str, ...] = (),
+    interactive: bool = False,
+) -> str:
     lines = [f"description = {json.dumps(description, ensure_ascii=False)}"]
     if run is not None:
         lines.append(f"run = {json.dumps(run, ensure_ascii=False)}")
     if depends:
         lines.append("depends = [" + ", ".join(json.dumps(item) for item in depends) + "]")
+    if interactive:
+        lines.append("interactive = true")
     return "\n".join(lines)
+
+
+def _tmux_bootstrap_package() -> str | None:
+    """Return the Mise bootstrap package for the current supported host."""
+    system = platform.system()
+    if system == "Linux":
+        return "apt:tmux"
+    if system == "Darwin":
+        return "brew:tmux"
+    return None
 
 
 def _project_environment_path(root: Path, environment: VirtualEnvironment | None) -> Path | None:
@@ -330,6 +350,7 @@ def _ensure_mise_config(
     root: Path,
     *,
     environment: VirtualEnvironment | None,
+    python_version_override: str | None = None,
 ) -> tuple[list[str], list[str], dict]:
     path = root / "mise.toml"
     if path.is_symlink():
@@ -343,7 +364,10 @@ def _ensure_mise_config(
         content = path.read_text(encoding="utf-8")
         existing = _read_toml(path)
 
-    python_version = _select_python_version(root, existing_mise=existing, environment=environment)
+    python_version = (
+        python_version_override
+        or _select_python_version(root, existing_mise=existing, environment=environment)
+    )
     tool_values = {
         "python": f"python = {json.dumps(python_version)}",
         "uv": 'uv = "latest"',
@@ -361,6 +385,22 @@ def _ensure_mise_config(
     }
     if missing_tools:
         content, inserted = _insert_table_values(content, "tools", missing_tools)
+        additions.extend(inserted)
+
+    # tmux is a host-level dependency, not a versioned project tool. Mise's
+    # bootstrap package manager installs it once per machine. Keep existing
+    # bootstrap declarations intact and add only the package for this host.
+    bootstrap_package = _tmux_bootstrap_package()
+    bootstrap_data = existing.get("bootstrap", {})
+    if not isinstance(bootstrap_data, dict):
+        raise DevEnvError("В mise.toml секция [bootstrap] должна быть таблицей.")
+    bootstrap_packages = bootstrap_data.get("packages", {})
+    if not isinstance(bootstrap_packages, dict):
+        raise DevEnvError("В mise.toml [bootstrap.packages] должна быть таблицей.")
+    if bootstrap_package and bootstrap_package not in bootstrap_packages:
+        content, inserted = _insert_table_values(
+            content, "bootstrap.packages", {json.dumps(bootstrap_package): f'{json.dumps(bootstrap_package)} = "latest"'}
+        )
         additions.extend(inserted)
 
     pyproject_path = root / "pyproject.toml"
@@ -391,6 +431,15 @@ def _ensure_mise_config(
         "typecheck": _render_task("pyright", description="Run Pyright type checking"),
         "test": _render_task(test_command, description="Run project tests"),
         "check": _render_task(description="Run lint, type checking, and tests", depends=("lint", "typecheck", "test")),
+        "opencode": _render_task(
+            "if [ -n \"${TMUX:-}\" ]; then\n"
+            "  exec opencode\n"
+            "fi\n"
+            'session="opencode-${MISE_PROJECT_ROOT##*/}"\n'
+            'exec tmux new-session -A -s "$session" opencode',
+            description="Launch OpenCode in a project-specific tmux session",
+            interactive=True,
+        ),
     }
     existing_tasks = existing.get("tasks", {})
     if not isinstance(existing_tasks, dict):
@@ -844,6 +893,69 @@ def _install_mise() -> tuple[bool, str]:
     return True, f"установлен {executable} ({version})"
 
 
+def _confirm_mise_bootstrap(*, assume_yes: bool, input_fn: Callable[[str], str]) -> bool:
+    if assume_yes:
+        return True
+    if not sys.stdin.isatty():
+        return False
+    package = _tmux_bootstrap_package() or "tmux"
+    answer = input_fn(
+        f"Mise установит системный пакет {package} (может запросить sudo). Продолжить? [y/N] "
+    ).strip().lower()
+    return answer in {"y", "yes", "д", "да"}
+
+
+def _run_mise_bootstrap(root: Path, package: str) -> tuple[bool, str]:
+    """Install only tmux, without applying unrelated bootstrap packages."""
+    mise = _mise_executable()
+    if not mise:
+        return False, "Mise не найден; установить tmux через bootstrap не удалось"
+    try:
+        completed = subprocess.run(
+            [mise, "bootstrap", "packages", "use", package], cwd=root, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=900, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, f"mise bootstrap packages use {package}: {exc}"
+    if completed.returncode == 0 and shutil.which("tmux"):
+        return True, (completed.stdout or "").strip() or "tmux установлен"
+    lines = (completed.stdout or "").strip().splitlines()
+    detail = "\n    ".join(lines[-8:]) if lines else f"код {completed.returncode}"
+    return False, f"Mise не установил {package}:\n    {detail}"
+
+
+def _choose_python_version(
+    root: Path,
+    environment: VirtualEnvironment | None,
+    *,
+    interactive: bool,
+    input_fn: Callable[[str], str],
+) -> str:
+    """Ask for a Python version only when the project has no explicit Mise choice."""
+    mise_path = root / "mise.toml"
+    existing = _read_toml(mise_path) if mise_path.is_file() and not mise_path.is_symlink() else {}
+    tools = existing.get("tools", {})
+    configured = tools.get("python") if isinstance(tools, dict) else None
+    if configured is not None:
+        return _select_python_version(root, existing_mise=existing, environment=environment)
+
+    detected = _select_python_version(root, existing_mise=existing, environment=environment)
+    if not interactive:
+        return detected
+
+    version_pattern = re.compile(r"^\d+\.\d+(?:\.\d+)?$")
+    while True:
+        answer = input_fn(
+            f"Версия Python для проекта [{detected}] "
+            "(например, 3.12, 3.13 или 3.14; Enter — оставить выбранную): "
+        ).strip()
+        if not answer:
+            return detected
+        if version_pattern.fullmatch(answer):
+            return answer
+        print("Укажи версию в формате major.minor или major.minor.patch, например 3.13.")
+
+
 def setup_python_tooling(
     root: Path,
     *,
@@ -857,11 +969,20 @@ def setup_python_tooling(
     environment = detect_virtual_environment(root)
     result.environment = environment
 
-    mise_created, mise_updates, mise_config = _ensure_mise_config(root, environment=environment)
+    python_version = _choose_python_version(
+        root,
+        environment,
+        interactive=install_missing and not assume_yes and sys.stdin.isatty(),
+        input_fn=input_fn,
+    )
+    mise_created, mise_updates, mise_config = _ensure_mise_config(
+        root, environment=environment, python_version_override=python_version
+    )
     result.created.extend(mise_created)
     result.updated.extend(mise_updates)
 
     python_version = _configured_tool_version(mise_config, "python", DEFAULT_PYTHON_VERSION)
+    result.python_version = python_version
     config_created, config_preserved = _prepare_tool_configs(root, python_version)
     result.created.extend(config_created)
     result.preserved.extend(config_preserved)
@@ -910,6 +1031,23 @@ def setup_python_tooling(
                 "`curl -fsSL https://mise.run | sh`, затем повторить `dev-env init`."
             )
             return result
+
+    # tmux is a host package declared under [bootstrap.packages], so it is
+    # installed separately from versioned [tools]. Do not run bootstrap when
+    # tmux is already available.
+    if _tmux_bootstrap_package() and not shutil.which("tmux"):
+        if _confirm_mise_bootstrap(assume_yes=assume_yes, input_fn=input_fn):
+            bootstrapped, detail = _run_mise_bootstrap(root, _tmux_bootstrap_package())
+            if bootstrapped:
+                result.installed.append("tmux (Mise bootstrap)")
+            else:
+                result.install_failures.append(detail)
+        else:
+            result.install_declined = True
+            result.warnings.append(
+                "Установка tmux пропущена. Подтверди её при следующем `dev-env init` "
+                "или выполни `mise bootstrap` вручную."
+            )
 
     candidates = _tool_install_candidates(root, mise_config, environment)
     result.install_candidates = candidates
@@ -1028,6 +1166,14 @@ def diagnose_python_tooling(root: Path):
                 f"команда `{command}` не найдена или не отвечает на --version", required=True,
             ))
 
+    tmux_path = shutil.which("tmux")
+    checks.append(Diagnostic(
+        "Terminal", "tmux", "OK" if tmux_path else "MISSING",
+        f"tmux → {tmux_path}" if tmux_path else
+        "не найден; выполни `dev-env init` с подтверждением установки или `mise bootstrap`",
+        required=True,
+    ))
+
     pyright_lsp = _resolve_command_executable("pyright-langserver", cwd=root)
     checks.append(Diagnostic(
         "LSP", "Pyright language server",
@@ -1082,7 +1228,7 @@ def diagnose_python_tooling(root: Path):
         tools = mise_data.get("tools", {})
         tasks = mise_data.get("tasks", {})
         expected_tools = set(DEFAULT_TOOLS)
-        expected_tasks = {"install", "lint", "format", "typecheck", "test", "check"}
+        expected_tasks = {"install", "lint", "format", "typecheck", "test", "check", "opencode"}
         missing_tools = sorted(expected_tools - set(tools if isinstance(tools, dict) else {}))
         missing_tasks = sorted(expected_tasks - set(tasks if isinstance(tasks, dict) else {}))
         checks.append(Diagnostic(

@@ -11,7 +11,9 @@ from dev_env.python_tools import (
     DEFAULT_TOOLS,
     PYTHON_EXCLUDES,
     _ensure_mise_config,
+    _choose_python_version,
     _requirements_install_command,
+    _run_mise_bootstrap,
     _tool_install_candidates,
     detect_virtual_environment,
     setup_python_tooling,
@@ -50,6 +52,54 @@ def make_manifest(root: Path) -> None:
         },
     )
 
+
+
+def test_python_version_prompt_uses_detected_default_and_accepts_selection(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.setattr("dev_env.python_tools._system_python_version", lambda *_: "3.12")
+
+    selected = _choose_python_version(
+        project, None, interactive=True, input_fn=lambda prompt: "3.13"
+    )
+
+    assert selected == "3.13"
+
+
+def test_python_version_prompt_keeps_detected_version_on_empty_input(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.setattr("dev_env.python_tools._system_python_version", lambda *_: "3.12")
+
+    selected = _choose_python_version(
+        project, None, interactive=True, input_fn=lambda prompt: ""
+    )
+
+    assert selected == "3.12"
+
+
+def test_python_version_prompt_preserves_existing_mise_choice(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "mise.toml").write_text('[tools]\npython = "3.11"\n', encoding="utf-8")
+
+    selected = _choose_python_version(
+        project, None, interactive=True, input_fn=lambda prompt: (_ for _ in ()).throw(AssertionError("prompt must not run"))
+    )
+
+    assert selected == "3.11"
+
+
+def test_python_version_prompt_is_skipped_in_noninteractive_mode(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.setattr("dev_env.python_tools._system_python_version", lambda *_: "3.12")
+
+    selected = _choose_python_version(
+        project, None, interactive=False, input_fn=lambda prompt: (_ for _ in ()).throw(AssertionError("prompt must not run"))
+    )
+
+    assert selected == "3.12"
 
 def test_detect_project_local_venv_before_unrelated_active_venv(tmp_path: Path) -> None:
     project = tmp_path / "project"
@@ -98,7 +148,11 @@ def test_mise_config_is_valid_and_uses_relative_paths_for_requirements_project(t
     assert created == ["mise.toml"]
     assert not updated
     assert set(DEFAULT_TOOLS).issubset(parsed["tools"])
-    assert set(("install", "lint", "format", "typecheck", "test", "check")).issubset(parsed["tasks"])
+    assert set(("install", "lint", "format", "typecheck", "test", "check", "opencode")).issubset(parsed["tasks"])
+    assert parsed["tasks"]["opencode"]["interactive"] is True
+    assert "TMUX" in parsed["tasks"]["opencode"]["run"]
+    assert "tmux new-session -A" in parsed["tasks"]["opencode"]["run"]
+    assert parsed["bootstrap"]["packages"]["apt:tmux"] == "latest"
     assert parsed["settings"]["python"]["uv_venv_auto"] == "source"
     assert parsed["env"]["_"]["python"]["venv"] == {"path": ".venv", "create": False}
     assert parsed["tasks"]["install"]["run"] == (
@@ -107,6 +161,56 @@ def test_mise_config_is_valid_and_uses_relative_paths_for_requirements_project(t
     assert str(project) not in content
     assert (project / ".venv").exists() is False  # init never creates the environment
 
+
+
+def test_mise_config_adds_tmux_bootstrap_for_macos(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.setattr("dev_env.python_tools.platform.system", lambda: "Darwin")
+    monkeypatch.setattr("dev_env.python_tools._system_python_version", lambda *_: "3.12")
+
+    _ensure_mise_config(project, environment=None)
+    parsed = tomllib.loads((project / "mise.toml").read_text(encoding="utf-8"))
+
+    assert parsed["bootstrap"]["packages"]["brew:tmux"] == "latest"
+
+
+def test_existing_opencode_task_is_preserved(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "mise.toml").write_text(
+        '[tasks.opencode]\ndescription = "My launcher"\nrun = "echo custom"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("dev_env.python_tools._system_python_version", lambda *_: "3.12")
+
+    _ensure_mise_config(project, environment=None)
+    parsed = tomllib.loads((project / "mise.toml").read_text(encoding="utf-8"))
+
+    assert parsed["tasks"]["opencode"]["run"] == "echo custom"
+    assert parsed["tasks"]["opencode"]["description"] == "My launcher"
+
+
+def test_run_mise_bootstrap_trusts_project_then_runs_bootstrap(tmp_path: Path, monkeypatch) -> None:
+    from subprocess import CompletedProcess
+
+    calls = []
+    monkeypatch.setattr("dev_env.python_tools._mise_executable", lambda: "/usr/bin/mise")
+    monkeypatch.setattr("dev_env.python_tools.shutil.which", lambda command: "/usr/bin/tmux" if command == "tmux" else None)
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return CompletedProcess(command, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr("dev_env.python_tools.subprocess.run", fake_run)
+
+    success, detail = _run_mise_bootstrap(tmp_path, "apt:tmux")
+
+    assert success is True
+    assert detail == "ok"
+    assert calls == [
+        ["/usr/bin/mise", "bootstrap", "packages", "use", "apt:tmux"],
+    ]
 
 def test_uv_project_task_uses_uv_sync_and_source_only_venv(tmp_path: Path, monkeypatch) -> None:
     project = tmp_path / "project"
