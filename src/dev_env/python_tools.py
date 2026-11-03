@@ -693,9 +693,20 @@ def _tool_install_candidates(root: Path, config: dict, environment: VirtualEnvir
     # first. `mise install <selector>` is idempotent, so this is safe when the
     # dependency is already installed under Mise.
     if any(selector.startswith("pypi:") for selector in candidates):
-        if not any(selector.startswith("python@") for selector in candidates):
+        # The Mise PyPI backend requires Mise-managed runtimes, not merely
+        # matching executables found on the user's PATH. A system `python` or
+        # `uv` therefore does not satisfy this dependency. `mise which` is the
+        # authoritative, non-installing check for the project-selected tool.
+        if not _mise_which("python", cwd=root):
             python_expected = _configured_tool_version(config, "python", DEFAULT_PYTHON_VERSION)
-            candidates.insert(0, f"python@{python_expected}")
+            if not any(selector.startswith("python@") for selector in candidates):
+                candidates.insert(0, f"python@{python_expected}")
+
+        if not _mise_which("uv", cwd=root):
+            uv_expected = _configured_tool_version(config, "uv", "latest")
+            if not any(selector.startswith("uv@") for selector in candidates):
+                pypi_index = next(i for i, selector in enumerate(candidates) if selector.startswith("pypi:"))
+                candidates.insert(pypi_index, f"uv@{uv_expected}")
 
     if any(selector.startswith("npm:") for selector in candidates):
         if not any(selector.startswith("node@") for selector in candidates):
@@ -760,7 +771,11 @@ def _run_mise_install(root: Path, candidates: list[str]) -> tuple[list[str], lis
             installed.append(selector)
         else:
             lines = (completed.stdout or "").strip().splitlines()
-            failures.append(f"{selector}: {lines[-1] if lines else f'код {completed.returncode}'}")
+            # Mise often prints a generic final error line after the useful
+            # dependency hint. Keep a bounded tail so init exposes the actual
+            # cause without flooding the terminal with debug/backtrace output.
+            detail = "\n    ".join(lines[-8:]) if lines else f"код {completed.returncode}"
+            failures.append(f"{selector}:\n    {detail}")
 
     if installed:
         try:

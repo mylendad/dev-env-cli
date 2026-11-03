@@ -194,6 +194,10 @@ def test_tool_install_candidates_skip_healthy_globally_available_tools(tmp_path:
     monkeypatch.setattr("dev_env.python_tools._command_version", lambda command, **kwargs: versions.get(command))
     monkeypatch.setattr("dev_env.python_tools._system_python_version", lambda *_: "3.12")
     monkeypatch.setattr("dev_env.python_tools.shutil.which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr(
+        "dev_env.python_tools._mise_which",
+        lambda command, **kwargs: f"/mise/installs/{command}/bin/{command}" if command in {"python", "uv"} else None,
+    )
 
     assert _tool_install_candidates(tmp_path, config, None) == []
 
@@ -219,9 +223,30 @@ def test_missing_pypi_tool_also_installs_mise_managed_python_first(
     monkeypatch.setattr("dev_env.python_tools._command_version", lambda command, **kwargs: versions.get(command))
     monkeypatch.setattr("dev_env.python_tools._system_python_version", lambda *_: "3.12.3")
     monkeypatch.setattr("dev_env.python_tools.shutil.which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr("dev_env.python_tools._mise_which", lambda command, **kwargs: None)
 
     assert _tool_install_candidates(tmp_path, config, None) == [
         "python@3.12",
+        "uv@latest",
+        "pypi:ruff@latest",
+    ]
+
+
+def test_missing_pypi_tool_installs_mise_uv_even_when_system_uv_exists(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = {"tools": {"python": "3.12", "uv": "latest", "pypi:ruff": "latest"}}
+    versions = {"uv": "uv 0.12.17", "ruff": None, "node": "v24.1.0", "pyright": "pyright 1.1.414"}
+    monkeypatch.setattr("dev_env.python_tools._command_version", lambda command, **kwargs: versions.get(command))
+    monkeypatch.setattr("dev_env.python_tools._system_python_version", lambda *_: "3.12.16")
+    monkeypatch.setattr("dev_env.python_tools.shutil.which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr(
+        "dev_env.python_tools._mise_which",
+        lambda command, **kwargs: "/mise/installs/python/3.12.16/bin/python" if command == "python" else None,
+    )
+
+    assert _tool_install_candidates(tmp_path, config, None) == [
+        "uv@latest",
         "pypi:ruff@latest",
     ]
 
