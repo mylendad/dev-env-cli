@@ -125,6 +125,8 @@ The `opencode` task starts or reattaches to a project-specific tmux session name
 
 The `serve` task runs a headless OpenCode server on `127.0.0.1:4096`. Override the port with `OPENCODE_PORT` (for example, `OPENCODE_PORT=4099 mise run serve`). It does not use tmux and is suitable for systemd or for a bot that talks to the OpenCode HTTP API.
 
+Both the `opencode` and `serve` tasks prepend `~/.local/bin` to `PATH`, so tools installed with `uv tool install` — for example Serena and `uvx` used by the OpenCode MCP configuration — are available even when the task is started from systemd or another minimal environment.
+
 On Linux, `mise.toml` declares `apt:tmux` under `[bootstrap.packages]`; on macOS it declares `brew:tmux`. `dev-env init` checks whether `tmux` is already available and, only if it is missing, asks before running `mise bootstrap packages use <manager>:tmux` (which may request administrator privileges). This installs only tmux, not unrelated packages declared in the bootstrap section. Existing bootstrap package declarations are preserved. On other platforms the launcher task is still generated, but tmux installation is left to the platform's package manager.
 
 `dev-env init` may generate `mise.toml` even when Mise is not installed. Install Mise, then run `mise install` or repeat `dev-env init` to install missing tools. When `dev-env` installs tools successfully, it creates/updates `mise.lock`; commit `mise.toml` and `mise.lock` if the project should reproduce the same tool versions on another machine.

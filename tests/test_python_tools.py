@@ -214,9 +214,11 @@ def test_mise_config_is_valid_and_uses_relative_paths_for_requirements_project(t
     }
     assert {"install", "lint", "format", "typecheck", "test", "check", "opencode", "serve"}.issubset(parsed["tasks"])
     assert parsed["tasks"]["serve"]["run"] == (
+        'PATH="$HOME/.local/bin:$PATH" '
         "opencode serve --port ${OPENCODE_PORT:-4096} --hostname 127.0.0.1"
     )
     assert parsed["tasks"]["opencode"]["interactive"] is True
+    assert 'export PATH="$HOME/.local/bin:$PATH"' in parsed["tasks"]["opencode"]["run"]
     assert "TMUX" in parsed["tasks"]["opencode"]["run"]
     assert "tmux new-session -A" in parsed["tasks"]["opencode"]["run"]
     assert parsed["bootstrap"]["packages"]["apt:tmux"] == "latest"

@@ -467,6 +467,7 @@ def _ensure_mise_config(
         "test": _render_task(test_command, description="Run project tests"),
         "check": _render_task(description="Run lint, type checking, and tests", depends=("lint", "typecheck", "test")),
         "opencode": _render_task(
+            'export PATH="$HOME/.local/bin:$PATH"\n'
             "if [ -n \"${TMUX:-}\" ]; then\n"
             "  exec opencode\n"
             "fi\n"
@@ -476,7 +477,7 @@ def _ensure_mise_config(
             interactive=True,
         ),
         "serve": _render_task(
-            "opencode serve --port ${OPENCODE_PORT:-4096} --hostname 127.0.0.1",
+            'PATH="$HOME/.local/bin:$PATH" opencode serve --port ${OPENCODE_PORT:-4096} --hostname 127.0.0.1',
             description="Run headless OpenCode server",
         ),
     }
