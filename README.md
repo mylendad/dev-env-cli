@@ -78,15 +78,22 @@ The generated `mise.toml` manages these tools:
 | Tool | Purpose |
 |---|---|
 | Python | Project Python version, inferred from existing Mise config, `.python-version`, `requires-python`, a project venv, or the available Python |
-
-During interactive `dev-env init`, the inferred Python version is offered as the default. Enter another version (for example `3.13` or `3.14`) to select it; press Enter to keep the detected version. An existing `mise.toml` Python selection is shown as the default, but can be changed interactively; Enter keeps it. Non-interactive/`--yes` runs preserve the existing selection and do not prompt.
 | uv | Virtual environments, lockfiles and project dependencies |
 | Ruff | Linting and formatting (Mise PyPI backend) |
-| Node.js | Runtime required by the Mise npm backend for Pyright |
+| Node.js | Runtime required by the Mise npm backend for Pyright and OpenCode |
 | Pyright | Static type checking and the Pyright language server |
+| OpenCode | CLI and headless server (`opencode serve`), installed with the Mise npm backend |
 | tmux | Persistent terminal session for OpenCode (installed as a host package through Mise bootstrap) |
 
-The initial selectors are Python `3.12` when no project/system version can be inferred, latest uv/Ruff/Pyright, and Node.js `24`. Existing `mise.toml` selectors are preserved unless you explicitly choose a different Python version at the interactive prompt. If an installed global command already satisfies the project's selector, the CLI reuses it rather than reinstalling it. For a selector of `latest`, reuse-first behavior means any existing executable is accepted; the CLI does not query the registry or upgrade it. A missing executable is installed at the newest version resolved by Mise. It also asks Mise to resolve the project-selected executable with `mise which`; this avoids treating an uninstalled Mise shim as an installed tool. Mise backend dependencies are handled separately: installing a missing `pypi:` tool also installs the configured Mise-managed Python and uv first, and installing a missing `npm:` tool also installs the configured Mise-managed Node.js first. This is required even when compatible system executables are available: the Mise PyPI backend resolves its installer dependencies from the Mise toolset, not from an unrelated system executable. The CLI checks `mise which` rather than relying on `PATH` for these backend prerequisites.
+During interactive `dev-env init`, the inferred Python version is offered as the default. Enter another version (for example `3.13` or `3.14`) to select it; press Enter to keep the detected version. An existing `mise.toml` Python selection is shown as the default, but can be changed interactively; Enter keeps it. Non-interactive/`--yes` runs preserve the existing selection and do not prompt.
+
+The initial selectors are Python `3.12` when no project/system version can be inferred, latest uv/Ruff/Pyright/OpenCode, and Node.js `24`. Existing `mise.toml` selectors are preserved unless you explicitly choose a different Python version at the interactive prompt. If an installed global command already satisfies the project's selector, the CLI reuses it rather than reinstalling it. For a selector of `latest`, reuse-first behavior means any existing executable is accepted; the CLI does not query the registry or upgrade it. A missing executable is installed at the newest version resolved by Mise. It also asks Mise to resolve the project-selected executable with `mise which`; this avoids treating an uninstalled Mise shim as an installed tool. Mise backend dependencies are handled separately: installing a missing `pypi:` tool also installs the configured Mise-managed Python and uv first, and installing a missing `npm:` tool also installs the configured Mise-managed Node.js first. This is required even when compatible system executables are available: the Mise PyPI backend resolves its installer dependencies from the Mise toolset, not from an unrelated system executable. The CLI checks `mise which` rather than relying on `PATH` for these backend prerequisites.
+
+OpenCode is installed through Mise's npm backend. Its package downloads the
+platform binary in a postinstall script, so the generated selector includes
+`allow_builds = ["opencode-ai"]`. Without that option Mise skips dependency
+scripts by default and leaves a broken `opencode` binary. This requires Mise
+2026.7.14 or newer.
 
 Ruff and Pyright config files are defaults only. If Ruff is already configured in `ruff.toml`, `.ruff.toml` or `[tool.ruff]`, or Pyright is configured in `pyrightconfig.json` or `[tool.pyright]`, those settings are left untouched.
 
@@ -111,9 +118,12 @@ mise run typecheck    # pyright
 mise run test         # pytest
 mise run check        # lint + typecheck + tests
 mise run opencode     # launch OpenCode inside tmux
+mise run serve        # run a headless OpenCode server
 ```
 
 The `opencode` task starts or reattaches to a project-specific tmux session named `opencode-<project-directory>`. If you are already inside tmux, it launches OpenCode in the current pane instead of nesting another tmux session. The task is interactive, so it keeps the terminal attached to OpenCode.
+
+The `serve` task runs a headless OpenCode server on `127.0.0.1:4096`. Override the port with `OPENCODE_PORT` (for example, `OPENCODE_PORT=4099 mise run serve`). It does not use tmux and is suitable for systemd or for a bot that talks to the OpenCode HTTP API.
 
 On Linux, `mise.toml` declares `apt:tmux` under `[bootstrap.packages]`; on macOS it declares `brew:tmux`. `dev-env init` checks whether `tmux` is already available and, only if it is missing, asks before running `mise bootstrap packages use <manager>:tmux` (which may request administrator privileges). This installs only tmux, not unrelated packages declared in the bootstrap section. Existing bootstrap package declarations are preserved. On other platforms the launcher task is still generated, but tmux installation is left to the platform's package manager.
 
@@ -123,9 +133,9 @@ On Linux, `mise.toml` declares `apt:tmux` under `[bootstrap.packages]`; on macOS
 
 `dev-env doctor` checks:
 
-- Mise, Python, uv, Ruff, Node.js, Pyright, `pyright-langserver` availability and versions, plus tmux availability;
-- the project-selected Mise executable via read-only `mise which` where available;
-- `mise.toml`, expected tool selectors and common tasks, including the interactive `opencode` launcher task;
+- Mise, Python, uv, Ruff, Node.js, Pyright, OpenCode, `pyright-langserver` availability and versions, plus tmux availability;
+- the project-selected Mise executable via read-only `mise which` where available, including `opencode`;
+- `mise.toml`, expected tool selectors and common tasks, including the interactive `opencode` launcher and the headless `serve` task;
 - the detected virtual environment;
 - `pyproject.toml`, Ruff TOML configuration and Pyright JSON configuration;
 - project and global OpenCode configuration, configured LSP/MCP commands, manifest and Git exclude rules.

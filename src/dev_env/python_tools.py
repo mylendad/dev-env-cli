@@ -25,6 +25,7 @@ DEFAULT_TOOLS = {
     "pypi:ruff": "latest",
     "node": "24",
     "npm:pyright": "latest",
+    "npm:opencode-ai": "latest",
 }
 
 PYTHON_EXCLUDES = (
@@ -393,6 +394,7 @@ def _ensure_mise_config(
         '"pypi:ruff"': '"pypi:ruff" = "latest"',
         "node": 'node = "24"',
         '"npm:pyright"': '"npm:pyright" = "latest"',
+        '"npm:opencode-ai"': '"npm:opencode-ai" = { version = "latest", allow_builds = ["opencode-ai"] }',
     }
     parsed_tools = existing.get("tools", {})
     if not isinstance(parsed_tools, dict):
@@ -472,6 +474,10 @@ def _ensure_mise_config(
             'exec tmux new-session -A -s "$session" opencode',
             description="Launch OpenCode in a project-specific tmux session",
             interactive=True,
+        ),
+        "serve": _render_task(
+            "opencode serve --port ${OPENCODE_PORT:-4096} --hostname 127.0.0.1",
+            description="Run headless OpenCode server",
         ),
     }
     existing_tasks = existing.get("tasks", {})
@@ -771,6 +777,15 @@ def _tool_install_candidates(root: Path, config: dict, environment: VirtualEnvir
     if not _version_matches(pyright_version, pyright_expected) or not language_server_exists:
         candidates.append(f"npm:pyright@{pyright_expected}")
 
+    # Install OpenCode only when the project declares it. Generated configs
+    # always declare it; callers that bypass _ensure_mise_config can opt out.
+    config_tools = config.get("tools", {}) if isinstance(config, dict) else {}
+    if isinstance(config_tools, dict) and "npm:opencode-ai" in config_tools:
+        opencode_expected = _configured_tool_version(config, "npm:opencode-ai", "latest")
+        opencode_version = _command_version("opencode", cwd=root)
+        if not _version_matches(opencode_version, opencode_expected):
+            candidates.append(f"npm:opencode-ai@{opencode_expected}")
+
     # Mise backends have managed-tool dependencies that are not satisfied by
     # executables found on the system PATH. In particular, `pypi:` requires a
     # Mise-managed Python even when the project already has a compatible venv;
@@ -821,12 +836,13 @@ def _confirm_install(
     return answer in {"y", "yes", "д", "да"}
 
 
-def _run_mise_install(root: Path, candidates: list[str]) -> tuple[list[str], list[str]]:
+def _run_mise_install(root: Path, candidates: list[str]) -> tuple[list[str], list[str], list[str]]:
     installed: list[str] = []
     failures: list[str] = []
+    warnings: list[str] = []
     mise = _mise_executable()
     if not mise:
-        return installed, ["Mise не найден; установку инструментов выполнить не удалось"]
+        return installed, ["Mise не найден; установку инструментов выполнить не удалось"], warnings
 
     try:
         trust = subprocess.run(
@@ -834,11 +850,11 @@ def _run_mise_install(root: Path, candidates: list[str]) -> tuple[list[str], lis
             text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30, check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return installed, [f"mise trust: {exc}"]
+        return installed, [f"mise trust: {exc}"], warnings
     if trust.returncode != 0:
         detail = (trust.stdout or "").strip().splitlines()
         failures.append("mise trust: " + (detail[-1] if detail else f"код {trust.returncode}"))
-        return installed, failures
+        return installed, failures, warnings
 
     for selector in candidates:
         try:
@@ -869,12 +885,12 @@ def _run_mise_install(root: Path, candidates: list[str]) -> tuple[list[str], lis
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120, check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            failures.append(f"mise lock: {exc}")
+            warnings.append(f"mise lock: {exc}")
         else:
             if locked.returncode != 0:
                 lines = (locked.stdout or "").strip().splitlines()
-                failures.append("mise lock: " + (lines[-1] if lines else f"код {locked.returncode}"))
-    return installed, failures
+                warnings.append("mise lock: " + (lines[-1] if lines else f"код {locked.returncode}"))
+    return installed, failures, warnings
 
 
 def _confirm_mise_install(*, assume_yes: bool, input_fn: Callable[[str], str]) -> bool:
@@ -1095,9 +1111,10 @@ def setup_python_tooling(
         )
         return result
 
-    installed, failures = _run_mise_install(root, candidates)
+    installed, failures, lock_warnings = _run_mise_install(root, candidates)
     result.installed.extend(installed)
     result.install_failures.extend(failures)
+    result.warnings.extend(lock_warnings)
     return result
 
 
@@ -1200,6 +1217,15 @@ def diagnose_python_tooling(root: Path):
                 f"команда `{command}` не найдена или не отвечает на --version", required=True,
             ))
 
+    opencode_path = _mise_which("opencode", cwd=root)
+    checks.append(Diagnostic(
+        "OpenCode", "opencode",
+        "OK" if opencode_path else "WARN",
+        f"mise which opencode → {opencode_path}" if opencode_path else
+        "не найден через Mise; выполни `mise install` (npm:opencode-ai с allow_builds)",
+        required=True,
+    ))
+
     tmux_path = shutil.which("tmux")
     checks.append(Diagnostic(
         "Terminal", "tmux", "OK" if tmux_path else "MISSING",
@@ -1262,7 +1288,7 @@ def diagnose_python_tooling(root: Path):
         tools = mise_data.get("tools", {})
         tasks = mise_data.get("tasks", {})
         expected_tools = set(DEFAULT_TOOLS)
-        expected_tasks = {"install", "lint", "format", "typecheck", "test", "check", "opencode"}
+        expected_tasks = {"install", "lint", "format", "typecheck", "test", "check", "opencode", "serve"}
         missing_tools = sorted(expected_tools - set(tools if isinstance(tools, dict) else {}))
         missing_tasks = sorted(expected_tasks - set(tasks if isinstance(tasks, dict) else {}))
         checks.append(Diagnostic(

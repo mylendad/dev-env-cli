@@ -14,6 +14,7 @@ from dev_env.python_tools import (
     _choose_python_version,
     _requirements_install_command,
     _run_mise_bootstrap,
+    _run_mise_install,
     _tool_install_candidates,
     detect_virtual_environment,
     setup_python_tooling,
@@ -207,7 +208,14 @@ def test_mise_config_is_valid_and_uses_relative_paths_for_requirements_project(t
     assert created == ["mise.toml"]
     assert not updated
     assert set(DEFAULT_TOOLS).issubset(parsed["tools"])
-    assert set(("install", "lint", "format", "typecheck", "test", "check", "opencode")).issubset(parsed["tasks"])
+    assert parsed["tools"]["npm:opencode-ai"] == {
+        "version": "latest",
+        "allow_builds": ["opencode-ai"],
+    }
+    assert {"install", "lint", "format", "typecheck", "test", "check", "opencode", "serve"}.issubset(parsed["tasks"])
+    assert parsed["tasks"]["serve"]["run"] == (
+        "opencode serve --port ${OPENCODE_PORT:-4096} --hostname 127.0.0.1"
+    )
     assert parsed["tasks"]["opencode"]["interactive"] is True
     assert "TMUX" in parsed["tasks"]["opencode"]["run"]
     assert "tmux new-session -A" in parsed["tasks"]["opencode"]["run"]
@@ -363,6 +371,56 @@ def test_tool_install_candidates_skip_healthy_globally_available_tools(tmp_path:
     )
 
     assert _tool_install_candidates(tmp_path, config, None) == []
+
+
+def test_tool_install_candidates_include_declared_opencode(tmp_path: Path, monkeypatch) -> None:
+    config = {
+        "tools": {
+            "python": "3.12",
+            "uv": "latest",
+            "pypi:ruff": "latest",
+            "node": "24",
+            "npm:pyright": "latest",
+            "npm:opencode-ai": {"version": "latest", "allow_builds": ["opencode-ai"]},
+        }
+    }
+    versions = {
+        "uv": "uv 0.9.0",
+        "ruff": "ruff 0.14.0",
+        "node": "v24.1.0",
+        "pyright": "pyright 1.1.400",
+    }
+    monkeypatch.setattr("dev_env.python_tools._command_version", lambda command, **kwargs: versions.get(command))
+    monkeypatch.setattr("dev_env.python_tools._system_python_version", lambda *_: "3.12")
+    monkeypatch.setattr("dev_env.python_tools.shutil.which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr(
+        "dev_env.python_tools._mise_which",
+        lambda command, **kwargs: f"/mise/installs/{command}/bin/{command}" if command in {"python", "uv"} else None,
+    )
+
+    assert _tool_install_candidates(tmp_path, config, None) == [
+        "node@24",
+        "npm:opencode-ai@latest",
+    ]
+
+
+def test_run_mise_install_reports_lock_failure_as_warning(tmp_path: Path, monkeypatch) -> None:
+    from subprocess import CompletedProcess
+
+    monkeypatch.setattr("dev_env.python_tools._mise_executable", lambda: "/usr/bin/mise")
+
+    def fake_run(command, **kwargs):
+        if command[1] == "lock":
+            return CompletedProcess(command, 1, stdout="lock failed\n", stderr="")
+        return CompletedProcess(command, 0, stdout="ok\n", stderr="")
+
+    monkeypatch.setattr("dev_env.python_tools.subprocess.run", fake_run)
+
+    installed, failures, warnings = _run_mise_install(tmp_path, ["npm:opencode-ai@latest"])
+
+    assert installed == ["npm:opencode-ai@latest"]
+    assert failures == []
+    assert warnings == ["mise lock: lock failed"]
 
 
 def test_missing_pypi_tool_also_installs_mise_managed_python_first(
@@ -568,6 +626,10 @@ def test_doctor_reports_python_tool_version_mismatches(tmp_path: Path, monkeypat
     monkeypatch.setattr("dev_env.python_tools.shutil.which", lambda command: f"/usr/bin/{command}")
     monkeypatch.setattr("dev_env.python_tools._version_from_python", lambda executable: "3.12.5")
     monkeypatch.setattr("dev_env.python_tools._resolve_command_executable", lambda command, **kwargs: f"/usr/bin/{command}")
+    monkeypatch.setattr(
+        "dev_env.python_tools._mise_which",
+        lambda command, **kwargs: "/mise/installs/npm-opencode-ai/1.19.5/bin/opencode" if command == "opencode" else None,
+    )
 
     checks = diagnose_python_tooling(project)
     by_name = {check.name: check for check in checks}
@@ -576,6 +638,42 @@ def test_doctor_reports_python_tool_version_mismatches(tmp_path: Path, monkeypat
     assert "ожидается 24" in by_name["Node.js"].detail
     assert by_name["Python"].status == "OK"
     assert by_name["Pyright language server"].status == "OK"
+    assert by_name["opencode"].status == "OK"
+
+
+def test_doctor_warns_when_opencode_is_not_installed_through_mise(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from dev_env.python_tools import diagnose_python_tooling
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "mise.toml").write_text(
+        '[tools]\npython = "3.12"\nuv = "latest"\n"pypi:ruff" = "latest"\n'
+        'node = "24"\n"npm:pyright" = "latest"\n'
+        '"npm:opencode-ai" = { version = "latest", allow_builds = ["opencode-ai"] }\n',
+        encoding="utf-8",
+    )
+    versions = {
+        "mise": "mise 2026.11.0",
+        "uv": "uv 0.9.0",
+        "ruff": "ruff 0.14.0",
+        "node": "v24.1.0",
+        "pyright": "pyright 1.1.400",
+    }
+    monkeypatch.setattr("dev_env.python_tools._command_version", lambda command, **kwargs: versions.get(command))
+    monkeypatch.setattr("dev_env.python_tools._mise_executable", lambda: "/usr/bin/mise")
+    monkeypatch.setattr("dev_env.python_tools._mise_which", lambda command, **kwargs: None)
+    monkeypatch.setattr("dev_env.python_tools.detect_virtual_environment", lambda root: None)
+    monkeypatch.setattr("dev_env.python_tools.shutil.which", lambda command: f"/usr/bin/{command}")
+    monkeypatch.setattr("dev_env.python_tools._version_from_python", lambda executable: "3.12.5")
+    monkeypatch.setattr("dev_env.python_tools._resolve_command_executable", lambda command, **kwargs: f"/usr/bin/{command}")
+
+    checks = diagnose_python_tooling(project)
+    opencode = next(check for check in checks if check.name == "opencode")
+
+    assert opencode.status == "WARN"
+    assert "mise install" in opencode.detail
 
 
 def test_doctor_uses_mise_selected_python_when_shell_shims_are_not_active(
@@ -605,6 +703,7 @@ def test_doctor_uses_mise_selected_python_when_shell_shims_are_not_active(
     )
     monkeypatch.setattr("dev_env.python_tools.detect_virtual_environment", lambda root: None)
     monkeypatch.setattr("dev_env.python_tools._version_from_python", lambda executable: "3.12.7" if executable == selected_python else None)
+    monkeypatch.setattr("dev_env.python_tools._mise_which", lambda command, **kwargs: None)
 
     checks = diagnose_python_tooling(project)
     python_check = next(check for check in checks if check.name == "Python")
